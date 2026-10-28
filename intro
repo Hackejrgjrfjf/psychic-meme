@@ -1,0 +1,123 @@
+#include "menu.hpp"
+#include "../src/core/main.hpp"
+#include <chrono>
+#include <algorithm>
+#include <cmath>
+constexpr ImVec4 kAccentColor(0.667f, 0.745f, 1.0f, 1.0f);
+bool c_menu::draw_intro() {
+    if (m_intro_finished)
+        return false;
+    static auto start_time = std::chrono::steady_clock::now();
+    static auto last_frame_time = start_time;
+    auto current_time = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(current_time - start_time).count();
+    float dt = std::chrono::duration<float>(current_time - last_frame_time).count();
+    last_frame_time = current_time;
+    if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / 60.0f;
+    m_intro_elapsed = elapsed;
+    ImGuiIO& io = ImGui::GetIO();
+    const float sw = io.DisplaySize.x;
+    const float sh = io.DisplaySize.y;
+    if (sw <= 10.0f || sh <= 10.0f)
+        return false;
+    auto smoothstep = [](float edge0, float edge1, float x) -> float {
+        const float t = ImClamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    const bool fully_init = g_ctx && g_ctx->m_fully_initialized;
+    if (fully_init && m_intro_ready_at < 0.0f) {
+        m_intro_ready_at = m_intro_elapsed;
+    }
+    if (m_intro_ready_at >= 0.0f && (m_intro_elapsed - m_intro_ready_at) > 3.00f) {
+        m_intro_finished = true;
+        return false;
+    }
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    if (!dl)
+        return false;
+    const float fade_out = (m_intro_ready_at >= 0.0f)
+        ? (1.0f - smoothstep(3.0f, 3.45f, m_intro_elapsed - m_intro_ready_at))
+        : 1.0f;
+    const int bg_a = static_cast<int>(153.0f * fade_out);
+    dl->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(sw, sh), IM_COL32(36, 36, 40, bg_a));
+    float anchor_x = 0.0f;
+    float anchor_y = 0.0f;
+    float anchor_w = 0.0f;
+    float anchor_bottom = 0.0f;
+    {
+        ImFont* font = m_intro_font ? m_intro_font : ImGui::GetFont();
+        const float font_size = font->FontSize;
+        const char* title = "activated done!";
+        const int title_n = 8;
+        const ImVec2 title_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, title);
+        float adv[8];
+        float total_adv = 0.0f;
+        for (int i = 0; i < title_n; i++) {
+            adv[i] = font->GetCharAdvance((ImWchar)title[i]);
+            total_adv += adv[i];
+        }
+        const float tracking = (1.0f - smoothstep(0.0f, 0.60f, m_intro_elapsed)) * 10.0f;
+        const float title_w = total_adv + tracking * (float)(title_n - 1);
+        const float tx = std::floor((sw - title_w) * 0.5f);
+        const float ty = std::floor((sh - title_size.y) * 0.5f);
+        float cx = tx;
+        for (int i = 0; i < title_n; i++) {
+            const float lr = smoothstep(0.03f * (float)i, 0.03f * (float)i + 0.30f, m_intro_elapsed) * fade_out;
+            if (lr > 0.003f) {
+                const float rise = (1.0f - lr) * 10.0f;
+                dl->AddText(font, font_size, ImVec2(cx + 1.0f, ty + rise + 1.0f),
+                            IM_COL32(0, 0, 0, static_cast<int>(120.0f * lr)), title + i, title + i + 1);
+                dl->AddText(font, font_size, ImVec2(cx, ty + rise),
+                            IM_COL32(242, 242, 245, static_cast<int>(255.0f * lr)), title + i, title + i + 1);
+            }
+            cx += adv[i] + tracking;
+        }
+        anchor_x = tx;
+        anchor_y = ty;
+        anchor_w = title_w;
+        anchor_bottom = ty + title_size.y;
+    }
+    const float emergence = smoothstep(0.10f, 0.55f, m_intro_elapsed) * fade_out;
+    const bool has_artwork = anchor_w > 4.0f && anchor_bottom > 1.0f;
+    const float track_w = has_artwork ? (anchor_w * 0.70f) : ImClamp(sw * 0.15f, 100.0f, 160.0f);
+    const float track_center_x = has_artwork ? anchor_x + anchor_w * 0.5f : sw * 0.5f;
+    const float track_left = track_center_x - track_w * 0.5f;
+    const float bar_start_y = has_artwork ? anchor_bottom - 6.0f : sh * 0.58f;
+    const float bar_rest_y = has_artwork ? anchor_bottom + 18.0f : sh * 0.58f + 28.0f;
+    const float track_y = bar_start_y + (bar_rest_y - bar_start_y) * emergence;
+    const float track_h = 7.0f;
+    const float bar_round = track_h * 0.5f;
+    const ImU32 accent_rgb = ImGui::ColorConvertFloat4ToU32(kAccentColor) & 0x00FFFFFF;
+    const int track_fill_a = static_cast<int>(255.0f * 0.20f * emergence);
+    ImU32 track_bg_col = accent_rgb | (static_cast<ImU32>(track_fill_a) << 24);
+    dl->AddRectFilled(ImVec2(track_left, track_y), ImVec2(track_left + track_w, track_y + track_h), track_bg_col, bar_round);
+    float progress = 0.0f;
+    if (m_intro_ready_at >= 0.0f) {
+        const float finish_t = ImClamp((m_intro_elapsed - m_intro_ready_at) / 0.35f, 0.0f, 1.0f);
+        progress = 0.85f + 0.15f * finish_t;
+    } else {
+        progress = ImClamp(m_intro_elapsed / 1.2f, 0.0f, 1.0f) * 0.85f;
+    }
+    progress = ImClamp(progress, 0.0f, 1.0f);
+    const float fill_w = track_w * progress;
+    if (fill_w > 0.5f) {
+        const float seg_r = (std::min)(bar_round, fill_w * 0.5f);
+        const int value_a = static_cast<int>(255.0f * emergence);
+        ImU32 bar_col = accent_rgb | (static_cast<ImU32>(value_a) << 24);
+        dl->AddRectFilled(ImVec2(track_left, track_y), ImVec2(track_left + fill_w, track_y + track_h), bar_col, seg_r);
+    }
+    return true;
+}
+float c_menu::get_intro_alpha() const {
+    if (m_intro_finished)
+        return 0.0f;
+    auto smoothstep = [](float edge0, float edge1, float x) -> float {
+        const float t = ImClamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    const float fade_in = smoothstep(0.0f, 0.35f, m_intro_elapsed);
+    const float fade_out = (m_intro_ready_at >= 0.0f)
+        ? (1.0f - smoothstep(0.0f, 0.45f, m_intro_elapsed - m_intro_ready_at))
+        : 1.0f;
+    return fade_in * fade_out;
+}
